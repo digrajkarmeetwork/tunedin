@@ -1,18 +1,15 @@
 name: Live check
+# Thin on purpose: all logic lives in ci/live-check.sh.
 on:
   deployment_status:
   workflow_dispatch:
-permissions: { contents: read }
+permissions:
+  contents: read
 jobs:
   live:
     if: github.event_name == 'workflow_dispatch' || (github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npm install --no-save --no-package-lock playwright@1.56.0 && npx playwright install --with-deps chromium
-      - name: Smoke test the live site
-        run: sleep 20 && node tests/smoke.mjs
-        env: { BASE_URL: "https://tunedin.meetdigrajkar.ca" }
+      - run: bash ci/live-check.sh
