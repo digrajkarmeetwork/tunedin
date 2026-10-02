@@ -301,6 +301,20 @@ const PACKS = [
   ["Silly","Serious"],["Introvert","Extrovert"],["One episode","Binge till 3am"],["Hates surprises","Loves surprises"],
   ["Cries at nothing","Cries at movies"],["Gym rat","Couch potato"],["Cat person","Dog person"],["Follow the recipe","Wing it"],
   ["Small wedding","Huge wedding"],["City life","Country life"],["Handles stress calmly","Stress spiral"],["Bad at gifts","Gift genius"]]},
+ {id:"sync",name:"In Sync",e:"🫶",c:"#FF6FAE",kind:"sync",couple:true,cards:[
+  ["Not romantic","Swoon-worthy","How romantic is a picnic?"],["Torture","Legendary","How fun is karaoke night?"],
+  ["No big deal","Terrifying","How scary is meeting the parents?"],["Handmade card","Diamonds","How big should an anniversary gift be?"],
+  ["Don't notice","Unbearable","How annoying is loud chewing?"],["A crime","Perfection","How good is pineapple on pizza?"],
+  ["Adorable","Cringe","How cute are matching outfits?"],["Whatever","Non-negotiable","How important is a clean kitchen before bed?"],
+  ["Rude","Totally fine","How okay is scrolling your phone at dinner?"],["Easy fix","Relationship over","How bad is forgetting a birthday?"],
+  ["Never","It's fine","How okay is going to bed angry?"],["Quiet moment","Flash mob","How big should a proposal be?"],
+  ["Boring","Perfect day","How good is a rainy Sunday at home?"],["Off limits","Fair game","How okay is reading your partner's texts?"],
+  ["Power nap","Whole afternoon","How long is the perfect nap?"],["Zero","A whole zoo","How many pets is the right number?"],
+  ["Sprint to the gate","Hours early","When should you get to the airport?"],["Sweet","Make it stop","How cute is couple baby talk?"],
+  ["Harmless","Betrayal","How bad is watching ahead on 'our' show?"],["Fun outing","Relationship test","How fun is IKEA together?"],
+  ["Unnecessary","Essential","How important are surprise dates?"],["Hate it","Love it","How much do we love camping?"],
+  ["Mild","Fire","How spicy should our takeout be?"],["Never","Every night","How often should we cook together?"],
+  ["Skip it","Must-have","How important is a honeymoon?"],["Too much","Not enough","How much PDA is right?"]]},
  {id:"date",name:"Date Night",e:"💞",c:"#FF8FC7",couple:true,cards:[
   ["Bad date idea","Perfect date idea"],["Unromantic","Swoon-worthy"],["Tiny pet peeve","Dealbreaker"],["Cringe pickup line","Smooth pickup line"],
   ["Slow burn","Love at first sight"],["Forgettable anniversary","Legendary anniversary"],["Awkward PDA","Cute PDA"],["Cheap date","Splurge date"],
@@ -386,9 +400,11 @@ function scoreFor(dial, target){
 function randTarget(){ return BAND*2.5 + Math.random()*(180 - BAND*5); }
 function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]];} return a; }
 function allPacks(){ return PACKS.concat(S.custom); }
-function buildDeck(ids){
+function buildDeck(ids, mode){
+  // In Sync cards need exactly two players, so they only join 1 v 1 decks.
   const cards=[];
-  allPacks().forEach(p=>{ if(ids.includes(p.id)) p.cards.forEach(c=>cards.push([clean(c[0]).slice(0,40),clean(c[1]).slice(0,40),p.id,p.kind||"spectrum"])); });
+  allPacks().forEach(p=>{ if(!ids.includes(p.id)) return; if(p.kind==="sync" && mode && mode!=="duel") return;
+    p.cards.forEach(c=>cards.push([clean(c[0]).slice(0,40),clean(c[1]).slice(0,40),p.id,p.kind||"spectrum",clean(c[2]||"").slice(0,80)])); });
   return shuffle(cards);
 }
 function drawTwist(mode){
@@ -399,6 +415,7 @@ function drawTwist(mode){
   return t;
 }
 function applyRound(g, r){
+  if (r.kind==="sync") return applySync(g, r);
   const pts = scoreFor(r.dial, r.target);
   const mult = r.twist && r.twist.fx==="double" ? 2 : 1;
   const sm = {pts, gained: pts*mult, lrPoint:0, again:false, over:false, winner:null, bonusCard:false};
@@ -424,6 +441,18 @@ function applyRound(g, r){
   g.round++; return sm;
 }
 
+function applySync(g, r){
+  // Both answers are compared; the match is shared, so both players score it.
+  const pts = scoreFor(r.sync[0], r.sync[1]);
+  const sm = {pts, gained: pts, lrPoint:0, again:false, over:false, winner:null, bonusCard:false, both:true};
+  g.teams.forEach(t=>t.score += pts);
+  g.sync = g.sync || {n:0, pts:0}; g.sync.n++; g.sync.pts += pts;
+  const sa = g.teams[0].score, sb = g.teams[1].score;
+  if ((sa >= g.goal || sb >= g.goal) && sa !== sb){ sm.over = true; sm.winner = sa > sb ? 0 : 1; }
+  if (!sm.over) g.active = 1-g.active;
+  g.round++; return sm;
+}
+
 /* ================= Game construction ================= */
 function makeGame(cfg){
   // cfg: {mode, names[2], packs, twists, timer, goal, players? (online)}
@@ -439,16 +468,24 @@ function makeGame(cfg){
   }
   const g = {mode:cfg.mode, online, players: online ? cfg.players.map(p=>({id:p.id,name:p.name})) : [],
     teams, goal:cfg.goal||10, round:1, active:0, twists:cfg.twists, timer:cfg.timer, packs:cfg.packs.slice(),
-    coop:{left:7,total:0}, deck:buildDeck(cfg.packs), r:null, lastSummary:null, winner:null, phase:null};
+    coop:{left:7,total:0}, sync:{n:0,pts:0}, deck:buildDeck(cfg.packs, cfg.mode), r:null, lastSummary:null, winner:null, phase:null};
   startRound(g);
   return g;
 }
-function drawCard(g){ if(!g.deck.length) g.deck = buildDeck(g.packs); return g.deck.pop(); }
-function dealCard(g, r){
-  r.card = drawCard(g); r.kind = r.card[3] || "spectrum";
+function drawCard(g, pred){
+  if(!g.deck.length) g.deck = buildDeck(g.packs, g.mode);
+  if(pred){
+    for(let i=g.deck.length-1;i>=0;i--) if(pred(g.deck[i])) return g.deck.splice(i,1)[0];
+    const fresh=buildDeck(g.packs, g.mode).filter(pred); if(fresh.length) return fresh.pop();
+  }
+  return g.deck.pop();
+}
+function dealCard(g, r, pred){
+  r.card = drawCard(g, pred); r.kind = r.card[3] || "spectrum";
   r.target = r.kind==="me" ? 90 : randTarget(); r.set = false;
-  r.twist = r.kind==="me" ? null : drawTwist(g.twists);
-  r.timeLimit = r.twist && r.twist.fx==="speed" ? 20 : g.timer;
+  r.twist = r.kind==="spectrum" ? drawTwist(g.twists) : null;
+  r.timeLimit = r.twist && r.twist.fx==="speed" ? 20 : (r.kind==="sync" ? 0 : g.timer);
+  r.sync = {0:null, 1:null}; r.syncTurn = g.active;
 }
 function startRound(g){
   const a = g.mode==="coop" ? 0 : g.active, t = g.teams[a];
@@ -467,7 +504,7 @@ function startRound(g){
   const r = {dial:90, clue:"", swaps:1, lr:null, team:a, psychic, guessers, lrPlayers, noLR, timerEnd:null, done:false};
   dealCard(g, r);
   g.r = r;
-  g.phase = g.online ? "clue" : "handoff";
+  g.phase = g.online ? (r.kind==="sync" ? "sync" : "clue") : "handoff";
 }
 function playerName(g, id){ const p = (g.players||[]).find(p=>p.id===id); return p ? p.name : "Someone"; }
 
@@ -479,8 +516,17 @@ function reduce(a, p, from){
   const isGuess = !g.online || r.guessers.includes(from);
   const isLR = !g.online || r.lrPlayers.includes(from);
   switch(a){
-    case "toPsychic": if(g.phase!=="handoff") return false; g.phase="clue"; return true;
-    case "swap": if(!isPsy||g.phase!=="clue"||r.swaps<=0) return false; r.swaps--; dealCard(g, r); return true;
+    case "toPsychic": if(g.phase!=="handoff") return false; g.phase = r.kind==="sync" ? "sync" : "clue"; return true;
+    case "swap": if(!isPsy||g.phase!=="clue"||r.swaps<=0) return false; r.swaps--; dealCard(g, r, c=>(c[3]||"spectrum")!=="sync"); return true;
+    case "syncLock": {
+      if(g.phase!=="sync"||r.kind!=="sync") return false;
+      const i = g.online ? g.teams.findIndex(t=>t.members.includes(from)) : r.syncTurn;
+      if(i<0 || i>1 || r.sync[i]!=null) return false;
+      r.sync[i] = Math.max(0,Math.min(180,+p.v||0));
+      if(r.sync[0]!=null && r.sync[1]!=null){ finish(g); return true; }
+      if(!g.online){ r.syncTurn = 1-i; g.phase="syncPass"; }
+      return true; }
+    case "syncGo": if(g.phase!=="syncPass") return false; g.phase="sync"; return true;
     case "setTarget": if(!isPsy||g.phase!=="clue"||r.kind!=="me") return false; r.target=Math.max(0,Math.min(180,+p.v)); r.set=true; return true;
     case "hide":
       if(!isPsy||g.phase!=="clue") return false;
@@ -573,7 +619,12 @@ function bandsSVG(t){
     const [lx,ly]=pt(m, R*0.8); out+=`<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" dominant-baseline="middle" font-size="19" font-weight="800" fill="#1E1646" font-family="var(--font)">${n}</text>`; });
   return out;
 }
-function dialSVG({target=null, needle=90, open=false, noanim=false, interactive=false, home=false, hideNeedle=false}={}){
+function needleSVG(v, col, cls="needle"){
+  return `<g class="${cls}" transform="rotate(${(v-90).toFixed(2)} ${CX} ${CY})">
+      <line x1="${CX}" y1="${CY}" x2="${CX}" y2="${CY-R+14}" stroke="${col}" stroke-width="7" stroke-linecap="round"/>
+      <circle cx="${CX}" cy="${CY-R+14}" r="7" fill="${col}"/></g>`;
+}
+function dialSVG({target=null, needle=90, open=false, noanim=false, interactive=false, home=false, hideNeedle=false, needles=null, overlay="", needleColor="#FF3B5C"}={}){
   let ticks="";
   for(let v=0; v<=180; v+=10){ const [x1,y1]=pt(v,R-4),[x2,y2]=pt(v, v%30===0?R-18:R-11);
     ticks+=`<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="var(--muted)" stroke-opacity=".5" stroke-width="${v%30===0?3:2}" stroke-linecap="round"/>`; }
@@ -583,12 +634,12 @@ function dialSVG({target=null, needle=90, open=false, noanim=false, interactive=
       <linearGradient id="shut" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--shutterA)"/><stop offset="1" stop-color="var(--shutterB)"/></linearGradient></defs>
     <path d="M${CX-R-8},${CY} A${R+8},${R+8} 0 0 1 ${CX+R+8},${CY} Z" fill="var(--faceEdge)"/>
     <path d="M${CX-R},${CY} A${R},${R} 0 0 1 ${CX+R},${CY} Z" fill="var(--face)"/>
-    <g class="bands">${bandsSVG(target)}</g>
+    <g class="bands">${overlay||bandsSVG(target)}</g>
     <g clip-path="url(#topHalf)"><g class="shutter"><path d="M${CX-R-1},${CY} A${R+1},${R+1} 0 0 1 ${CX+R+1},${CY} Z" fill="url(#shut)"/>${rings}</g></g>
     ${ticks}
-    ${hideNeedle?"":`<g class="needle" ${home?"":`transform="rotate(${(needle-90).toFixed(2)} ${CX} ${CY})"`}>
-      <line x1="${CX}" y1="${CY}" x2="${CX}" y2="${CY-R+14}" stroke="#FF3B5C" stroke-width="7" stroke-linecap="round"/>
-      <circle cx="${CX}" cy="${CY-R+14}" r="7" fill="#FF3B5C"/></g>`}
+    ${needles ? needles.map(n=>needleSVG(n.v, n.c, "needle sn")).join("") : hideNeedle?"":`<g class="needle" ${home?"":`transform="rotate(${(needle-90).toFixed(2)} ${CX} ${CY})"`}>
+      <line x1="${CX}" y1="${CY}" x2="${CX}" y2="${CY-R+14}" stroke="${needleColor}" stroke-width="7" stroke-linecap="round"/>
+      <circle cx="${CX}" cy="${CY-R+14}" r="7" fill="${needleColor}"/></g>`}
     <circle cx="${CX}" cy="${CY}" r="22" fill="#FF3B5C"/><circle cx="${CX}" cy="${CY}" r="9" fill="#FFF6EA"/>
   </svg>`;
 }
@@ -639,7 +690,7 @@ function topBar(){
 /* ================= Shared bits ================= */
 function packTiles(sel, act, editable=true){
   return allPacks().map(pk=>`<button class="pack ${sel.includes(pk.id)?"on":""}" style="--pc:${pk.c||"#8F6BFF"}" ${editable?`data-act="${act}" data-id="${esc(pk.id)}"`:"disabled"} aria-pressed="${sel.includes(pk.id)}">
-    <span class="e">${pk.e||"✨"}</span><span><b>${esc(pk.name)}</b><br><small>${pk.kind==="me"?"About you · ":""}${pk.cards.length} cards</small></span></button>`).join("");
+    <span class="e">${pk.e||"✨"}</span><span><b>${esc(pk.name)}</b><br><small>${pk.kind==="me"?"About you · ":pk.kind==="sync"?"1 v 1 · ":""}${pk.cards.length} cards</small></span></button>`).join("");
 }
 function seg(act, cur, opts, editable=true){
   return `<div class="seg">${opts.map(([v,l])=>`<button class="${cur===v?"on":""}" ${editable?`data-act="${act}" data-v="${v}"`:"disabled"}>${l}</button>`).join("")}</div>`;
@@ -652,7 +703,7 @@ const MODE_HINT = {
 function coupleHint(mode, packs){
   if (mode!=="duel") return "";
   const has = packs.includes("knowme") || packs.includes("date");
-  return `<p class="hint">💞 Playing as a couple? Add <b>Know Me</b>: you place yourself on the dial and your partner guesses where you are.${has?"":""}</p>`;
+  return `<p class="hint">💞 Playing as a couple? Add <b>Know Me</b> (place yourself, your partner guesses) or <b>In Sync</b> (you both answer the same question in secret, then reveal together).${has?"":""}</p>`;
 }
 
 /* ================= Screens ================= */
@@ -678,7 +729,7 @@ screens.home = () => {
 
 screens.setup = () => {
   const p=S.prefs;
-  const count = buildDeck(p.packs).length;
+  const count = buildDeck(p.packs, p.mode).length;
   const names = p.mode==="teams" ? `<div class="sect a-names"><label>Team names</label>
       <div class="teamin"><i style="background:var(--teamA)"></i><input class="field" id="n0" maxlength="16" value="${esc(p.names[0])}" aria-label="Team 1 name"></div>
       <div class="teamin"><i style="background:var(--teamB)"></i><input class="field" id="n1" maxlength="16" value="${esc(p.names[1])}" aria-label="Team 2 name"></div></div>`
@@ -727,7 +778,7 @@ screens.lobby = () => {
     return `<button class="pl ${p.online?"":"off"}" ${canSwap?`data-act="swapTeam" data-id="${esc(p.id)}"`:""}>
       <i style="background:${col}"></i><span>${esc(p.name)}${p.id===CID?'<span class="youtag">you</span>':""}</span>
       <small>${p.id===L.hostId?"host":(p.online?"":"offline")}${canSwap?" · tap to switch":""}</small></button>`; }).join("");
-  const count = buildDeck(st.packs).length;
+  const count = buildDeck(st.packs, st.mode).length;
   const need = st.mode==="teams" ? [0,1].every(t=>L.players.some(p=>p.team===t)) : n>=2;
   return `${topBar()}
   <div class="main form lobby" style="justify-content:flex-start;gap:16px">
@@ -751,6 +802,16 @@ screens.lobby = () => {
 /* ---- in-game ---- */
 screens.handoff = () => {
   const g=S.game, sm=g.lastSummary, again = sm && sm.again && !sm.over;
+  if (g.r.kind==="sync"){
+    const me=g.teams[g.r.syncTurn], other=g.teams[1-g.r.syncTurn];
+    return `${topBar()}
+    <div class="main">
+      <div class="handoff" style="--c:${me.color}"><div class="eye">🫶</div><h2 class="big">In Sync round</h2>
+        <p>You'll both answer the same question in secret, then reveal together. ${esc(me.name)} goes first. ${esc(other.name)}, no peeking!</p></div>
+      <p class="hint" style="text-align:center">Round ${g.round} · first to ${g.goal}</p>
+    </div>
+    <div class="foot"><button class="btn" data-act="toPsychic">I'm ${esc(me.name)}. Show me.</button></div>`;
+  }
   const c = g.mode==="coop" ? "var(--mint)" : activeTeam().color;
   let title, body;
   if (g.mode==="duel"){ title = `${esc(activeTeam().name)}, you're the psychic`; body = `Take the phone. ${esc(otherTeam().name)}, no peeking!`; }
@@ -818,6 +879,71 @@ screens.guess = () => {
   ${canDrag?`<div class="foot"><button class="btn" data-act="lock">Lock it in</button></div>`:""}`;
 };
 
+/* ---- In Sync: both answer in secret, then reveal ---- */
+function syncSide(g){ // which answer slot this phone fills right now (-1 = just watching)
+  return g.online ? g.teams.findIndex(t=>t.members.includes(CID)) : g.r.syncTurn;
+}
+function syncDraft(g){
+  const k = g.round+":"+syncSide(g);
+  if (S.syncKey!==k){ S.syncKey=k; S.syncV=90; S.syncTouched=false; }
+  return S.syncV;
+}
+screens.sync = () => {
+  const g=S.game, r=g.r, i=syncSide(g);
+  const q = `<div style="text-align:center"><span class="tag">🫶 In Sync</span></div><p class="me-q">${esc(r.card[4]||(r.card[0]+" or "+r.card[1]+"?"))}</p>`;
+  if (i<0){
+    return `${topBar()}<div class="main">${q}<div class="dialwrap">${dialSVG({hideNeedle:true})}${endsHTML(r.card)}</div>
+      ${waitHTML(`${esc(g.teams[0].name)} and ${esc(g.teams[1].name)} are answering…`)}</div>`;
+  }
+  const me=g.teams[i], other=g.teams[1-i];
+  if (r.sync[i]!=null){
+    return `${topBar()}<div class="main">${q}<div class="dialwrap">${dialSVG({hideNeedle:true})}${endsHTML(r.card)}</div>
+      ${waitHTML(`Locked in! Waiting for ${esc(other.name)}…`)}</div>`;
+  }
+  const v = syncDraft(g);
+  const status = g.online
+    ? (r.sync[1-i]!=null ? `${esc(other.name)} has locked in ✓` : `${esc(other.name)} is answering too.`)
+    : (r.sync[1-i]!=null ? `${esc(other.name)} already answered. Now you.` : `${esc(other.name)} answers next. Then you reveal together.`);
+  return `${topBar()}
+  <div class="main">
+    ${q}
+    <p class="hint" style="text-align:center">${esc(me.name)}, drag to your honest answer. ${status}</p>
+    <div class="dialwrap" id="dw">${dialSVG({needle:v, open:true, noanim:true, interactive:true, needleColor:me.color})}${endsHTML(r.card)}</div>
+    <div class="nudge"><button data-act="nudge" data-v="-1" aria-label="Nudge left">◀</button><button data-act="nudge" data-v="1" aria-label="Nudge right">▶</button></div>
+  </div>
+  <div class="foot"><button class="btn" data-act="syncLock" id="syncBtn" ${S.syncTouched?"":"disabled"}>${S.syncTouched?(g.online?"Lock in my answer":"Lock it & pass to "+esc(other.name)):"Drag the needle first"}</button></div>`;
+};
+screens.syncPass = () => {
+  const g=S.game, r=g.r, next=g.teams[r.syncTurn], prev=g.teams[1-r.syncTurn];
+  return `${topBar()}
+  <div class="main">
+    <div class="handoff" style="--c:${next.color}"><div class="eye">🤫</div><h2 class="big">Pass to ${esc(next.name)}</h2>
+      <p>${esc(prev.name)} is locked in. No hints, no faces!</p></div>
+  </div>
+  <div class="foot"><button class="btn" data-act="syncGo">I'm ${esc(next.name)}. Show me.</button></div>`;
+};
+const VERDICT_SYNC = {4:"Perfectly in sync!",3:"Same wavelength.",2:"Close-ish. Worth a chat.",0:"Opposite ends! Talk it out."};
+function syncRevealHTML(g, r, s){
+  const a=r.sync[0], b=r.sync[1], lo=Math.min(a,b), hi=Math.max(a,b), mid=(a+b)/2;
+  const gap = hi-lo < 1 ? "" : `<path d="${wedge(lo,hi,R-2)}" fill="var(--pink)" fill-opacity=".35"/>`;
+  const pct = Math.round((hi-lo)/180*100);
+  const col = {4:"var(--pink)",3:"var(--mint)",2:"var(--sun)",0:"var(--muted)"}[s.pts];
+  const key = g.teams.map((t,k)=>`<span class="tag" style="color:var(--ink)"><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${t.color}"></i>${esc(t.name)}</span>`).join(" ");
+  return `${topBar()}
+  <div class="main">
+    <p class="me-q">${esc(r.card[4]||"")}</p>
+    <div class="dialwrap">${dialSVG({overlay:gap, needles:[{v:a,c:g.teams[0].color},{v:b,c:g.teams[1].color}]})}${endsHTML(r.card)}</div>
+    <div style="text-align:center">${key}</div>
+    <div class="result">
+      <div class="pts" id="pts" style="color:${col}">+${s.gained}</div>
+      <div class="verdict fade">${VERDICT_SYNC[s.pts]}</div>
+      <div class="lrres fade">${pct<=1?"Exactly the same spot!":pct+"% of the dial apart"} · +${s.gained} each</div>
+      <div class="talk fade">💬 ${s.pts>=3?"Great minds. What made you both land there?":"Compare notes: why did you each pick your spot?"}</div>
+    </div>
+  </div>
+  <div class="foot"><button class="btn fade" data-act="next">${s.over?"See results":"Next round"}</button></div>`;
+}
+
 screens.lr = () => {
   const g=S.game, r=g.r, v=view();
   return `${topBar()}
@@ -837,6 +963,7 @@ const VERDICT = {4:"Bullseye! Pure telepathy.",3:"So close. Nice read.",2:"On th
 const VERDICT_ME = {4:"You know them so well!",3:"Pretty close!",2:"Warm-ish.",0:"Plot twist! Didn't see that coming."};
 screens.reveal = () => {
   const g=S.game, r=g.r, s=g.lastSummary;
+  if (r.kind==="sync") return syncRevealHTML(g, r, s);
   let lrLine="";
   if (g.mode==="teams" && r.lr){
     const on = g.teams[1-r.team].name;
@@ -871,7 +998,8 @@ screens.over = () => {
     head=`<div class="eye">${e}</div><h2 class="big">${rk}</h2>`; body=`<p>You scored ${g.coop.total} points together.</p>`;
   } else { const w=g.teams[g.winner]; c=w.color;
     head=`<div class="eye">🏆</div><h2 class="big">${esc(w.name)} wins!</h2>`;
-    body=`<p>${g.teams.map(t=>esc(t.name)+" "+t.score).join(" · ")}</p>`; }
+    body=`<p>${g.teams.map(t=>esc(t.name)+" "+t.score).join(" · ")}</p>`;
+    if (g.sync && g.sync.n) body += `<p>🫶 In Sync: ${Math.round(g.sync.pts/(g.sync.n*4)*100)}% matched over ${g.sync.n} question${g.sync.n>1?"s":""}</p>`; }
   const btns = g.online
     ? (v.host ? `<button class="btn" data-act="backToLobby">Play again</button>` : waitHTML("Waiting for the host")) + `<button class="btn alt" data-act="leave">Leave room</button>`
     : `<button class="btn" data-act="again">Play again</button><button class="btn alt" data-act="quit">Home</button>`;
@@ -894,6 +1022,7 @@ function modalHTML(){
       <li>Reveal! Closer to the middle scores more.</li>
     </ol>
     <div class="wedgekey"><span style="background:var(--sun)">2</span><span style="background:var(--mint)">3</span><span style="background:var(--pink)">4</span><span style="background:var(--mint)">3</span><span style="background:var(--sun)">2</span></div>
+    <p class="hint"><b>In Sync cards</b> (1 v 1) have no psychic. You both secretly answer the same question, like “How romantic is a picnic?”, then reveal at once. The closer your needles, the more you both score.</p>
     <p class="hint"><b>Know Me cards</b> are different: there's no clue. The psychic drags the dial to where they honestly are (Homebody ↔ Party animal) and their partner guesses.</p>
     <p class="hint">Clues can be anything: a word, a movie, a person, a feeling. No numbers. The team going second starts with 1 point, and a bullseye while behind earns a bonus turn.</p>
     <button class="btn" data-act="close">Got it</button>`;
@@ -903,7 +1032,7 @@ function modalHTML(){
     <button class="btn alt" data-act="close">Keep playing</button>
     <button class="btn alt" data-act="help">How to play</button>
     <button class="btn alt" data-act="theme">Switch light/dark</button>
-    ${g && view().host && ["clue","guess","lr"].includes(g.phase)?`<button class="btn alt" data-act="skip">Skip this round</button>`:""}
+    ${g && view().host && ["clue","guess","lr","sync","syncPass"].includes(g.phase)?`<button class="btn alt" data-act="skip">Skip this round</button>`:""}
     ${S.net?`<button class="btn pink" data-act="leave">Leave room</button>`:`<button class="btn pink" data-act="quit">End game</button>`}`;
   } else if (S.modal==="packs"){
     const mine = S.custom.map(p=>`<div class="it"><span>${p.e||"✨"} ${esc(p.name)} · ${p.cards.length}</span><button class="link" style="padding:4px" data-act="delPack" data-id="${esc(p.id)}">Delete</button></div>`).join("");
@@ -935,7 +1064,7 @@ function renderKey(){
   const g=S.game, sc=currentScreen();
   let k = sc+"|"+S.modal+"|"+S.prefs.muted+"|"+(document.documentElement.dataset.theme||"");
   if (sc==="lobby") k += JSON.stringify(S.lobby);
-  if (g){ const r=g.r; k += "|"+g.round+"|"+g.phase+"|"+JSON.stringify(g.teams.map(t=>[t.score,t.members]))+"|"+(r&&[r.card[0],r.swaps,r.set,r.set?r.target:0,r.clue,r.lr,r.psychic].join("~")); }
+  if (g){ const r=g.r; k += "|"+g.round+"|"+g.phase+"|"+JSON.stringify(g.teams.map(t=>[t.score,t.members]))+"|"+(r&&[r.card[0],r.swaps,r.set,r.set?r.target:0,r.clue,r.lr,r.psychic,r.syncTurn,r.sync?(r.sync[0]!=null)+"/"+(r.sync[1]!=null):""].join("~")); }
   return k;
 }
 function render(force){
@@ -955,6 +1084,7 @@ function after(sc){
   clearInterval(uiTimer); uiTimer=null;
   if (sc==="guess"){ bindDial("guess"); startUiTimer(); }
   if (sc==="clue" && S.game.r.kind==="me" && view().psy) bindDial("set");
+  if (sc==="sync") bindDial("sync");
   if (sc==="reveal") runReveal();
   if (sc==="setup"){
     [["n0","names",0],["n1","names",1],["p0","pnames",0],["p1","pnames",1]].forEach(([id,k,i])=>{ const el=$("#"+id); if(el) el.oninput=()=>{ S.prefs[k][i]=el.value; savePrefs(); }; });
@@ -1006,6 +1136,8 @@ function bindDial(mode){
   const setV=(v, final)=>{
     v=Math.max(0,Math.min(180,v));
     if(mode==="guess"){ g.r.dial=v; needle && needle.setAttribute("transform",`rotate(${(v-90).toFixed(2)} ${CX} ${CY})`); }
+    else if(mode==="sync"){ S.syncV=v; needle && needle.setAttribute("transform",`rotate(${(v-90).toFixed(2)} ${CX} ${CY})`);
+      if(!S.syncTouched){ S.syncTouched=true; const b=$("#syncBtn"); if(b){ b.disabled=false; b.textContent=g.online?"Lock in my answer":"Lock it & pass to "+g.teams[1-g.r.syncTurn].name; } } }
     else { g.r.target=v; bands.innerHTML=bandsSVG(v); }
     const k=Math.round(v/6); if(k!==lastTick){ lastTick=k; sfx.tick(); }
     send(final);
@@ -1016,11 +1148,12 @@ function bindDial(mode){
   svg.addEventListener("pointermove",e=>{ if(S.dragging) setV(fromEvent(e)); });
   const end=()=>{ if(!S.dragging) return; S.dragging=false;
     if(mode==="guess"){ send(true); }
+    else if(mode==="sync"){ /* stays on this phone until locked */ }
     else { dispatch("setTarget",{v:g.r.target}); }
     if(!authority()) render(false);
   };
   svg.addEventListener("pointerup",end); svg.addEventListener("pointercancel",end);
-  S._nudge = d => { if(mode!=="guess") return; setV(g.r.dial+d, true); };
+  S._nudge = d => { if(mode==="guess") setV(g.r.dial+d, true); else if(mode==="sync") setV(S.syncV+d, true); };
 }
 
 /* ================= Networking (Supabase Realtime) =================
@@ -1163,7 +1296,12 @@ function broadcastDial(){
   const n=S.net; if(!n||n.role!=="host"||!S.game||!S.game.r) return;
   send("dial", {round:S.game.round, v:S.game.r.dial});
 }
-function strip(g){ const c=Object.assign({}, g); c.deck=[]; return c; }
+function strip(g){
+  const c=Object.assign({}, g); c.deck=[];
+  if (g.r && g.r.kind==="sync" && g.phase==="sync") // only reveal *that* someone locked, not where
+    c.r = Object.assign({}, g.r, {sync:{0:g.r.sync[0]==null?null:-1, 1:g.r.sync[1]==null?null:-1}});
+  return c;
+}
 
 /* ---------- joining ---------- */
 async function joinRoom(){
@@ -1280,6 +1418,8 @@ const actions = {
   nudge(el){ S._nudge && S._nudge(+el.dataset.v); },
   lock(){ sfx.lock(); buzzPhone(30); dispatch("lock"); },
   lr(el){ dispatch("lr",{v:el.dataset.v}); },
+  syncLock(){ if(!S.syncTouched) return; sfx.lock(); buzzPhone(30); dispatch("syncLock",{v:S.syncV}); },
+  syncGo(){ dispatch("syncGo"); },
   next(){ dispatch("next"); },
   skip(){ S.modal=null; dispatch("skip"); },
   // online
@@ -1320,7 +1460,7 @@ document.addEventListener("click", e=>{
 });
 document.addEventListener("keydown", e=>{
   const tag=document.activeElement && document.activeElement.tagName;
-  if(S.game && S.game.phase==="guess" && !S.modal && tag!=="INPUT"){
+  if(S.game && (S.game.phase==="guess"||S.game.phase==="sync") && !S.modal && tag!=="INPUT"){
     if(e.key==="ArrowLeft"){ S._nudge&&S._nudge(-2); e.preventDefault(); }
     if(e.key==="ArrowRight"){ S._nudge&&S._nudge(2); e.preventDefault(); }
   }
@@ -1336,7 +1476,7 @@ document.addEventListener("keydown", e=>{
 const th=store.get("theme",null); if(th) document.documentElement.dataset.theme=th;
 render(true);
 initSample();
-window.TunedIn = {scoreFor, applyRound, buildDeck, makeGame, PACKS, TWISTS, BAND, S, CID};
+window.TunedIn = {scoreFor, applyRound, buildDeck, makeGame, reduce, strip, render, PACKS, TWISTS, BAND, S, CID};
 })();
 
 </script>
